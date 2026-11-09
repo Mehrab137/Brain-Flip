@@ -244,6 +244,27 @@ input.field:focus{border-color:var(--cyan)}
 #cFlash .a{font-size:clamp(3rem,18vw,6rem);line-height:1}#cFlash .b{font-size:1.4rem}
 #cFlash.ok{background:#0b8f3f}#cFlash.no{background:#d6212f}#cFlash.rule{background:linear-gradient(135deg,var(--c1),var(--c2))}
 
+#saboToast{position:absolute;top:13vh;left:50%;transform:translate(-50%,-20px) scale(.8);opacity:0;pointer-events:none;z-index:6;white-space:nowrap;max-width:94vw;
+  font-family:var(--font);font-size:clamp(1.2rem,3vw,2.6rem);background:#2a0a4aee;border:4px solid #e879f9;border-radius:18px;padding:.4rem 1.6rem;box-shadow:0 0 40px #e879f9aa;transition:.25s cubic-bezier(.2,1.6,.4,1);overflow:hidden;text-overflow:ellipsis}
+#saboToast.show{opacity:1;transform:translate(-50%,0) scale(1)}
+.pcard.flipmark::before{content:'🔀';position:absolute;left:-.5rem;top:-1.2rem;font-size:clamp(1.2rem,2.2vw,2rem);animation:flick .35s infinite alternate;z-index:2}
+/* phone: sabotage */
+#cMain.flipped #btnTrue{order:3} #cMain.flipped #btnFalse{order:2}
+#btnTrue{order:2} #btnFalse{order:3}
+#cMain.wobble .bigbtn{animation:wob .5s}
+@keyframes wob{0%{transform:translateY(-30px) rotate(-3deg)}50%{transform:translateY(12px) rotate(2deg)}100%{transform:none}}
+#cFlipBanner{position:absolute;left:0;right:0;top:36%;z-index:3;text-align:center;pointer-events:none;font-family:var(--font);font-size:clamp(1.5rem,8vw,2.6rem);color:#fff;text-shadow:0 4px 0 #000,0 0 24px #e879f9;opacity:0}
+#cFlipBanner.show{animation:flipban 1.6s forwards}
+@keyframes flipban{0%{opacity:0;transform:scale(2)}15%{opacity:1;transform:scale(1)}75%{opacity:1}100%{opacity:0}}
+#cSabo{position:absolute;inset:0;z-index:9;background:linear-gradient(#240a3a,#0b0b24);display:flex;flex-direction:column;align-items:center;gap:.7rem;padding:calc(env(safe-area-inset-top) + 14px) 16px 16px;text-align:center;overflow:auto}
+#cSabo h2{font-family:var(--font);font-weight:400;font-size:clamp(2rem,10vw,3.4rem);margin:0;color:#e879f9}
+#cSabo p{margin:0;opacity:.85}
+#saboList{display:flex;flex-direction:column;gap:.5rem;width:100%;max-width:420px}
+#saboList .sp{font-family:var(--font);font-size:1.3rem;padding:.6em;border-radius:14px;border:4px solid var(--pc,#fff);background:#000a;color:#fff}
+#saboList .sp.sel{background:var(--pc,#fff);color:#10102a;transform:scale(1.04)}
+#saboList .sp.fl{opacity:.65}
+#saboMsg{min-height:1.4em;font-weight:700}#saboMsg.ok{color:#6bff9a}#saboMsg.no{color:#ff9aa5}
+#cOverlay .btn{margin-top:.5rem}
 @media (max-width:360px){#emojiGrid{grid-template-columns:repeat(6,1fr)}}
 @media (max-width:900px) and (orientation:portrait){
   #sLobby{flex-direction:column;overflow:auto;justify-content:flex-start;padding-top:6vh}
@@ -318,6 +339,7 @@ input.field:focus{border-color:var(--cyan)}
     <div id="stage">
       <div id="itemName">…</div>
       <div id="outBanner"><div class="ob1"></div><div class="ob2"></div></div>
+      <div id="saboToast"></div>
       <div id="reveal"><div id="revAns"></div><div id="revFact"></div></div>
     </div>
     <div id="timerWrap"><div id="timerBar"></div></div>
@@ -355,7 +377,9 @@ input.field:focus{border-color:var(--cyan)}
     <button class="bigbtn" id="btnFalse" disabled>✘ FALSE</button>
     <div id="cFlash"><div class="a"></div><div class="b"></div></div>
     <div id="cPulse"></div>
-    <div id="cOverlay"><h2></h2><p></p><div id="cAwards"></div><button class="btn" id="btnRename" hidden>✎ CHANGE NAME</button></div>
+    <div id="cOverlay"><h2></h2><p></p><div id="cAwards"></div><button class="btn" id="btnSabo" hidden>😈 SABOTAGE</button><button class="btn" id="btnRename" hidden>✎ CHANGE NAME</button></div>
+    <div id="cFlipBanner"></div>
+    <div id="cSabo" hidden><h2>😈 SABOTAGE</h2><p>Pick a survivor, then flip their TRUE / FALSE buttons for one prompt.</p><div id="saboList"></div><button class="btn big" id="btnFlip" disabled>🔀 FLIP THEIR BUTTONS</button><div id="saboMsg"></div><button class="btn alt" id="btnSaboBack">← BACK</button></div>
   </div>
 </div>
 
@@ -380,6 +404,7 @@ const ID_PREFIX     = 'brainflip-';
 const EMOJIS = ['😎','🦊','🐸','🐼','🦄','🐙','🤖','👻','🐵','🦁','🐯','🐧','🦖','🍕','👽','🐲'];
 const COLORS = ['#ff4d6d','#27e8ff','#ffe14d','#7CFF6B','#c77dff','#ff9f1c','#4dffd2','#ff8fd8'];
 const ABORT = Symbol('abort');
+const SABO_COOLDOWN = 3;            // an eliminated player can sabotage again after this many prompts
 const GRACE_MS = 400;               // extra wait for in-flight phone answers (phones time themselves to 2.25 s)
 const ROOM_ROOT = 'rooms/BF';       // rooms/BFABCD  (BF prefix keeps it apart from the cricket game's rooms)
 
@@ -605,7 +630,7 @@ function route(){
    ===================================================================== */
 const H = {
   room:null, uid:'', code:'', players:new Map(), cards:new Map(),
-  phase:'lobby', runId:0, cur:null, rule:null, ruleSeq:[], used:new Set(), startCount:0, started:false
+  phase:'lobby', runId:0, cur:null, rule:null, ruleSeq:[], used:new Set(), startCount:0, started:false, lastIdx:-1
 };
 
 function startHost(){
@@ -705,12 +730,18 @@ function broadcast(msg, filter){ H.players.forEach(p=>{ if(!filter||filter(p)) s
 function ruleInfo(r){ return r?{id:r.id,q:r.q,emoji:r.emoji,c1:r.c1,c2:r.c2,kind:r.kind}:null; }
 function rankOf(p){ return 1+[...H.players.values()].filter(q=>q.inGame&&q.score>p.score).length; }
 function snapshot(p){
-  const cur=H.cur;
-  return {name:p.name, emoji:p.emoji, color:p.color, phase:H.phase, inGame:p.inGame, alive:p.alive, lives:p.lives, score:p.score,
+  const cur=H.cur, flipOn=!!(p.flipNow && cur && !cur.done);
+  const o={name:p.name, emoji:p.emoji, color:p.color, phase:H.phase, inGame:p.inGame, alive:p.alive, lives:p.lives, score:p.score,
     streak:p.streak||0, rank:rankOf(p), n:[...H.players.values()].filter(q=>q.inGame).length,
     rule: ruleInfo(H.rule), total:TOTAL_PROMPTS,
     open: !!(cur && !cur.done && p.inGame && p.alive && !(p.cid in cur.answers)), idx: cur?cur.idx:-1,
+    flip: flipOn, flipBy: flipOn?p.flipSrc2||'':'',
     end: p.endInfo||null};
+  if(H.phase==='playing' && p.inGame && !p.alive){        // eliminated: give the sabotage menu what it needs
+    o.saboLeft=Math.max(0,p.saboAt+SABO_COOLDOWN-H.lastIdx);
+    o.alivePlayers=[...H.players.values()].filter(q=>q.inGame&&q.alive).map(q=>({cid:q.cid,emoji:q.emoji,name:q.name,color:q.color,flip:!!q.flipNext}));
+  }
+  return o;
 }
 function pushAll(){ H.players.forEach(p=>send(p,null)); }
 
@@ -752,6 +783,7 @@ function onMsg(m){
     lockReact(p);
     if(allAnswered(cur)) finishPrompt();
   }
+  else if(m.t==='sabo') onSabo(m);
 }
 function onPresence(map){
   H.players.forEach(p=>{
@@ -774,6 +806,7 @@ function allAnswered(cur){
 function resetPlayer(p){
   p.alive=true; p.lives=START_LIVES; p.score=0; p.elimAt=-1; p.endInfo=null;
   p.rtSum=0; p.rtN=0; p.streak=0; p.bestStreak=0; p.bestMs=Infinity; p.wrongs=0; p.timeouts=0; p.minLives=START_LIVES;
+  p.flipNext=false; p.flipNow=false; p.flipSrc=''; p.saboAt=-99;
 }
 function pickEmoji(want, self){
   const taken=new Set([...H.players.values()].filter(q=>q!==self).map(q=>q.emoji));
@@ -791,6 +824,27 @@ function lockReact(p){
   setReact(p.cid, p.emoji, 'lock'); c.classList.add('locked'); Sfx.tone(900,.05,'triangle',.08);
 }
 
+/* ---- sabotage: eliminated players flip a survivor's TRUE/FALSE buttons for one prompt ---- */
+function onSabo(m){
+  const p=H.players.get(String(m.cid||'')), t=H.players.get(String(m.target||''));
+  if(!p || H.phase!=='playing') return;
+  const no=msg=>send(p,{t:'sabo',ok:false,msg});
+  if(!p.inGame||p.alive) return no('Only eliminated players can sabotage.');
+  if(!t||!t.inGame||!t.alive) return no('That player is already out.');
+  const left=Math.max(0,p.saboAt+SABO_COOLDOWN-H.lastIdx);
+  if(left>0) return no('Recharging… '+left+' more prompt'+(left>1?'s':''));
+  if(t.flipNext) return no(t.name+' is already flipped!');
+  t.flipNext=true; t.flipSrc=p.emoji+' '+p.name; p.saboAt=H.lastIdx;
+  send(p,{t:'sabo',ok:true,msg:'🔀 '+t.name+'’s buttons flip on the next prompt!'});
+  showSaboToast(p,t); updateScoreboard();
+}
+let saboToastT=0;
+function showSaboToast(p,t){
+  const el=$('#saboToast'); el.textContent='😈 '+p.emoji+' '+p.name+' flipped '+t.emoji+' '+t.name+'’s buttons!';
+  el.classList.add('show'); clearTimeout(saboToastT); saboToastT=setTimeout(()=>el.classList.remove('show'),2600);
+  Sfx.tone(260,.3,'sawtooth',.14,0,1300); Sfx.tone(1300,.2,'square',.08,.3,300);
+}
+
 /* ---- lobby ---- */
 function renderLobby(){
   const chips=$('#chips'); chips.innerHTML='';
@@ -802,7 +856,7 @@ function renderLobby(){
 }
 function goLobby(){
   H.runId++; clearCur(); H.cur=null; Voice.cancel(); Confetti.stop();
-  H.phase='lobby'; H.rule=null;
+  H.phase='lobby'; H.rule=null; H.lastIdx=-1;
   for(const [cid,p] of H.players) if(!p.connected) H.players.delete(cid);
   H.players.forEach(p=>{ p.inGame=true; resetPlayer(p); });
   show($('#sLobby')); show($('#sGame'),false); show($('#sEnd'),false);
@@ -840,7 +894,7 @@ function startGame(){
   for(const [cid,p] of H.players) if(!p.connected) H.players.delete(cid);
   if(!H.players.size) return;
   H.players.forEach(p=>{ p.inGame=true; resetPlayer(p); });
-  H.startCount=H.players.size; H.used.clear(); H.ruleSeq=makeRuleSeq(); H.rule=null; H.cur=null;
+  H.startCount=H.players.size; H.lastIdx=-1; H.used.clear(); H.ruleSeq=makeRuleSeq(); H.rule=null; H.cur=null;
   H.phase='playing'; H.runId++;
   show($('#sLobby'),false); show($('#sGame')); show($('#sEnd'),false);
   $('#rbEmoji').textContent='🧠'; $('#rbText').textContent='GET READY'; $('#promptNo').textContent='';
@@ -900,6 +954,10 @@ function runPrompt(idx){
   return new Promise(resolve=>{
     const rule=H.rule, item=pickItem(rule);
     const cur=H.cur={idx,item,answer:rule.test(item),start:0,answers:{},done:false,timers:[],raf:0,resolve};
+    // sabotage: flips queued by eliminated players land on this prompt only
+    H.lastIdx=idx;
+    H.players.forEach(q=>{ q.flipNow=q.flipNext; q.flipSrc2=q.flipNow?q.flipSrc:''; q.flipNext=false; q.flipSrc=''; });
+    updateScoreboard();
     // UI
     const nm=$('#itemName'); nm.textContent=item.name.toUpperCase();
     nm.classList.remove('pop'); void nm.offsetWidth; nm.classList.add('pop');
@@ -985,6 +1043,7 @@ function finishPrompt(){
     popDelta(r.p.cid, r.ok?('+'+r.delta+(r.bonus?' ⚡':'')):((r.reason==='timeout'?'⏰ −❤':'✘ −❤')+(r.lost>=3?' 💨':'')), r.ok);
     send(r.p,{t:'result',ok:r.ok,reason:r.reason,delta:r.delta,bonus:r.bonus,lives:r.p.lives,score:r.p.score,alive:r.p.alive});
   });
+  H.players.forEach(q=>{ if(q.inGame&&!q.alive&&!results.some(r=>r.p===q)) send(q,null); });
   setTimeout(()=>{ if(run===H.runId) cur.resolve(); }, elimNames.length?2800:1500);
 }
 function shouldEnd(){
@@ -1015,6 +1074,7 @@ function updateScoreboard(){
     const st=p.streak||0; el.classList.remove('fire3','fire5','fire8');
     if(p.alive&&st>=3) el.classList.add(st>=8?'fire8':st>=5?'fire5':'fire3');
     el.querySelector('.pstreak').textContent=(p.alive&&st>=3)?'🔥'+st:'';
+    el.classList.toggle('flipmark', !!(p.alive&&(p.flipNext||(p.flipNow&&H.cur&&!H.cur.done))));
   });
 }
 function popDelta(cid,text,good){
@@ -1116,6 +1176,7 @@ function endGame(){
    CONTROLLER (phone)
    ===================================================================== */
 const C = {
+  saboOpen:false, saboTarget:'',
   code:'', name:'', cid:'', room:null, connected:true, joined:false, hostGone:false, goneT:0,
   lastIdx:-1, promptAt:0, lockT:0, flashT:0, refs:[],
   s:{name:'',color:'#fff',phase:'lobby',inGame:true,alive:true,lives:START_LIVES,score:0,rule:null,open:false,idx:-1,end:null}
@@ -1137,6 +1198,13 @@ function startController(prefill){
   $('#btnRename').onclick=()=>{
     $('#inName').value=C.name; $('#btnJoin').textContent='SAVE NAME'; $('#btnJoin').disabled=false; setStatus('');
     show($('#cJoin')); show($('#cMain'),false); $('#inName').focus(); $('#inName').select();
+  };
+  $('#btnSabo').onclick=()=>{ C.saboOpen=true; $('#saboMsg').textContent=''; $('#saboMsg').className=''; renderCtrl(); };
+  $('#btnSaboBack').onclick=()=>{ C.saboOpen=false; renderCtrl(); };
+  $('#btnFlip').onclick=()=>{
+    if(!C.saboTarget||!C.room) return;
+    $('#saboMsg').textContent='Sending…'; $('#saboMsg').className='';
+    C.room.child('up').push({t:'sabo',cid:C.cid,target:C.saboTarget});
   };
   // Only auto-rejoin when this same tab was already in this room (page reload); a fresh QR scan shows the name screen.
   if(prefill && $('#inName').value && sess.get('bf_active')===$('#inCode').value) ctrlJoin();
@@ -1223,6 +1291,11 @@ function applyHostMsg(m, skipEv){
     if(st.rule) applyRuleColor(st.rule);
     if(newPrompt){
       C.lastIdx=st.idx; C.promptAt=performance.now(); resetChosen(); hideFlash();
+      const cm=$('#cMain'); cm.classList.remove('wobble'); void cm.offsetWidth;
+      if(st.flip){
+        cm.classList.add('wobble'); if(navigator.vibrate) navigator.vibrate([60,40,60,40,60]);
+        const fb=$('#cFlipBanner'); fb.textContent='🔀 FLIPPED BY '+(st.flipBy||'A GHOST 👻'); fb.className=''; void fb.offsetWidth; fb.className='show';
+      }
       clearTimeout(C.lockT); C.lockT=setTimeout(()=>{ if(C.s.open){ C.s.open=false; renderCtrl(); } }, TIMER_MS);
     }
   }
@@ -1232,6 +1305,8 @@ function applyHostMsg(m, skipEv){
       const lbl={simple:'NEW RULE',twist:'TWIST RULE',combo:'COMBO RULE'}[s.rule&&s.rule.kind]||'NEW RULE';
       ctrlFlash('rule','⚠ '+lbl, (s.rule?s.rule.emoji+' '+s.rule.q:''), 2800);
       vib([120,60,120,60,220]);
+    } else if(ev.t==='sabo'){
+      const sm=$('#saboMsg'); sm.textContent=ev.msg; sm.className=ev.ok?'ok':'no'; vib(ev.ok?[40,30,90]:[120]);
     } else if(ev.t==='result'){
       if(ev.ok){
         const hot=[3,5,8].includes(s.streak);
@@ -1244,6 +1319,27 @@ function applyHostMsg(m, skipEv){
     }
   }
   renderCtrl();
+}
+function renderSabo(){
+  const s=C.s;
+  const canUse=s.phase==='playing' && s.inGame && !s.alive;
+  $('#btnSabo').hidden=!(canUse && C.connected && !C.hostGone);
+  if(!canUse) C.saboOpen=false;
+  $('#cSabo').hidden=!C.saboOpen;
+  if(!C.saboOpen) return;
+  const list=s.alivePlayers||[], box=$('#saboList'); box.innerHTML='';
+  if(!list.some(x=>x.cid===C.saboTarget)) C.saboTarget='';
+  list.forEach(x=>{
+    const b=document.createElement('button'); b.type='button';
+    b.className='sp'+(x.cid===C.saboTarget?' sel':'')+(x.flip?' fl':''); b.style.setProperty('--pc',x.color);
+    b.textContent=x.emoji+' '+x.name+(x.flip?'  🔀':'');
+    b.onclick=()=>{ C.saboTarget=x.cid; renderSabo(); };
+    box.appendChild(b);
+  });
+  if(!list.length) box.textContent='No one left to sabotage!';
+  const left=s.saboLeft||0, f=$('#btnFlip');
+  f.disabled=!C.saboTarget||left>0;
+  f.textContent=left>0?('⚡ RECHARGING… '+left):'🔀 FLIP THEIR BUTTONS';
 }
 function applyRuleColor(r){ if(r){ const d=document.documentElement.style; d.setProperty('--rc', r.c1); d.setProperty('--c1',r.c1); d.setProperty('--c2',r.c2); } }
 function resetChosen(){ $('#btnTrue').classList.remove('chosen'); $('#btnFalse').classList.remove('chosen'); }
@@ -1292,6 +1388,8 @@ function renderCtrl(){
   if(s.phase==='end' && s.end && s.end.awards) s.end.awards.forEach(a=>{ const d=document.createElement('div'); d.textContent=a; aw.appendChild(d); });
   if(mode===null) ov.hidden=true;
   else { ov.hidden=false; ov.className=mode; h2.textContent=t1; p.textContent=t2; }
+  $('#cMain').classList.toggle('flipped', !!s.flip);
+  renderSabo();
   $('#btnRename').hidden=!(s.phase==='lobby' && C.connected && !C.hostGone);
 }
 
