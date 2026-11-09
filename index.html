@@ -113,6 +113,13 @@ input.field:focus{border-color:var(--cyan)}
 #rbDots{display:flex;gap:.5rem}
 #rbDots i{width:1.1rem;height:1.1rem;border-radius:50%;background:#fff3;display:block}
 #rbDots i.on{background:var(--neon);box-shadow:0 0 12px var(--neon)}
+#aliveCount{font-family:var(--font);font-size:clamp(1rem,2vw,1.8rem);padding:.2em .7em;border-radius:999px;background:#ffffff22;white-space:nowrap}
+#outBanner{position:absolute;top:1vh;left:50%;transform:translate(-50%,-30px) scale(.8);opacity:0;pointer-events:none;text-align:center;z-index:5;transition:.25s cubic-bezier(.2,1.6,.4,1);
+  background:#2a0008ee;border:5px solid #ff3347;border-radius:20px;padding:.5rem 2.2rem;box-shadow:0 0 50px #ff3347aa;max-width:94vw}
+#outBanner.show{opacity:1;transform:translate(-50%,0) scale(1)}
+#outBanner .ob1{font-family:var(--font);font-size:clamp(1.8rem,5vw,4.4rem);color:#ff6b7d;text-shadow:0 4px 0 #000}
+#outBanner .ob2{font-family:var(--font);font-size:clamp(1.2rem,3vw,2.6rem);color:var(--neon)}
+#winSub{font-size:clamp(1rem,2vw,1.7rem);font-weight:700;opacity:.9;margin:.4rem 0 0;min-height:1.2em}
 #promptNo{font-family:var(--font);font-size:clamp(1rem,2vw,1.8rem);opacity:.9;min-width:9ch;text-align:right}
 #stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;min-height:0;text-align:center}
 #itemName{font-family:var(--font);font-size:clamp(3rem,min(11vw,19vh),11rem);line-height:.95;text-shadow:0 8px 0 #0007,0 0 40px #fff5;padding:0 2vw;max-width:96vw}
@@ -271,10 +278,12 @@ input.field:focus{border-color:var(--cyan)}
       <div id="rbEmoji">🧠</div>
       <div id="rbText">GET READY</div>
       <div id="rbDots"></div>
+      <div id="aliveCount"></div>
       <div id="promptNo"></div>
     </div>
     <div id="stage">
       <div id="itemName">…</div>
+      <div id="outBanner"><div class="ob1"></div><div class="ob2"></div></div>
       <div id="reveal"><div id="revAns"></div><div id="revFact"></div></div>
     </div>
     <div id="timerWrap"><div id="timerBar"></div></div>
@@ -284,6 +293,7 @@ input.field:focus{border-color:var(--cyan)}
   <section id="sEnd" class="screen" hidden>
     <div id="winTitle">WINNER</div>
     <div id="winName">—</div>
+    <div id="winSub"></div>
     <div id="standings"></div>
     <button class="btn big" id="btnAgain">↻ PLAY AGAIN</button>
   </section>
@@ -692,7 +702,7 @@ function onMsg(m){
       while([...H.players.values()].some(q=>q.name===name)) name=(base.slice(0,10)+' '+(n++)).slice(0,12);
       const used=new Set([...H.players.values()].map(q=>q.color));
       p={cid,name,color:COLORS.find(c=>!used.has(c))||pick(COLORS),connected:true,seq:0,
-         inGame:H.phase==='lobby',alive:true,lives:START_LIVES,score:0,elimAt:-1,endInfo:null};
+         inGame:H.phase==='lobby',alive:true,lives:START_LIVES,score:0,elimAt:-1,endInfo:null,rtSum:0,rtN:0};
       H.players.set(cid,p);
       Sfx.join();
     }
@@ -738,7 +748,7 @@ function goLobby(){
   H.runId++; clearCur(); H.cur=null; Voice.cancel(); Confetti.stop();
   H.phase='lobby'; H.rule=null;
   for(const [cid,p] of H.players) if(!p.connected) H.players.delete(cid);
-  H.players.forEach(p=>{ p.inGame=true; p.alive=true; p.lives=START_LIVES; p.score=0; p.elimAt=-1; p.endInfo=null; });
+  H.players.forEach(p=>{ p.inGame=true; p.alive=true; p.lives=START_LIVES; p.score=0; p.elimAt=-1; p.endInfo=null; p.rtSum=0; p.rtN=0; });
   show($('#sLobby')); show($('#sGame'),false); show($('#sEnd'),false);
   $('#ruleBanner').classList.remove('show'); $('#countdown').classList.remove('show');
   renderLobby(); pushAll();
@@ -769,7 +779,7 @@ function startGame(){
   Sfx.init(); Voice.prime();
   for(const [cid,p] of H.players) if(!p.connected) H.players.delete(cid);
   if(!H.players.size) return;
-  H.players.forEach(p=>{ p.inGame=true; p.alive=true; p.lives=START_LIVES; p.score=0; p.elimAt=-1; p.endInfo=null; });
+  H.players.forEach(p=>{ p.inGame=true; p.alive=true; p.lives=START_LIVES; p.score=0; p.elimAt=-1; p.endInfo=null; p.rtSum=0; p.rtN=0; });
   H.startCount=H.players.size; H.used.clear(); H.ruleSeq=makeRuleSeq(); H.rule=null; H.cur=null;
   H.phase='playing'; H.runId++;
   show($('#sLobby'),false); show($('#sGame')); show($('#sEnd'),false);
@@ -830,7 +840,7 @@ function runPrompt(idx){
     // UI
     const nm=$('#itemName'); nm.textContent=item.name.toUpperCase();
     nm.classList.remove('pop'); void nm.offsetWidth; nm.classList.add('pop');
-    $('#reveal').className='';
+    $('#reveal').className=''; $('#outBanner').classList.remove('show');
     $('#promptNo').textContent='PROMPT '+(idx+1)+'/'+TOTAL_PROMPTS;
     const dots=$('#rbDots'); dots.innerHTML=''; const inBlock=idx%RULE_EVERY;
     for(let i=0;i<RULE_EVERY;i++){ const d=document.createElement('i'); if(i<=inBlock) d.className='on'; dots.appendChild(d); }
@@ -864,7 +874,7 @@ function finishPrompt(){
     const a=cur.answers[p.cid]; let ok=false, reason='';
     if(!a) reason='timeout'; else if(a.v===cur.answer) ok=true; else reason='wrong';
     let delta=0, bonus=false;
-    if(ok){ delta=100; if(a.ms<BONUS_MS){ delta+=50; bonus=true; } p.score+=delta; }
+    if(ok){ delta=100; if(a.ms<BONUS_MS){ delta+=50; bonus=true; } p.score+=delta; p.rtSum+=a.ms; p.rtN++; }
     else { p.lives--; anyWrong=true; if(p.lives<=0){ p.alive=false; p.elimAt=cur.idx; elimNames.push(p.name); } }
     results.push({p,ok,reason,delta,bonus});
   });
@@ -877,7 +887,20 @@ function finishPrompt(){
     Sfx.wrong(); const h=$('#host'); h.classList.remove('shake'); void h.offsetWidth; h.classList.add('shake');
     const f=$('#flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
   } else Sfx.correct();
-  if(elimNames.length){ setTimeout(Sfx.elim.bind(Sfx),350); Voice.cancel(); Voice.speak(elimNames.join(' and ')+(elimNames.length>1?' are':' is')+' out!',{pitch:.8}); }
+  if(elimNames.length){
+    const left=[...H.players.values()].filter(q=>q.inGame&&q.alive).length;
+    const multi=H.startCount>1;
+    const who=elimNames.join(' & ');
+    let sub='', say=elimNames.join(' and ')+(elimNames.length>1?' are':' is')+' out!';
+    if(multi){
+      if(left>=2){ sub=left+' PLAYERS LEFT'; say+=' '+left+' players left.'; }
+      else if(left===1){ sub='1 PLAYER LEFT — LAST ONE STANDING!'; say+=' One player left.'; }
+      else { sub='NO ONE LEFT — FASTEST ANSWERS BREAK THE TIE!'; say+=' Fastest answers break the tie.'; }
+    }
+    const ob=$('#outBanner'); ob.querySelector('.ob1').textContent=who+(elimNames.length>1?' ARE OUT!':' IS OUT!'); ob.querySelector('.ob2').textContent=sub;
+    ob.classList.add('show');
+    setTimeout(Sfx.elim.bind(Sfx),350); Voice.cancel(); Voice.speak(say,{pitch:.8});
+  }
   // scoreboard + phones
   updateScoreboard();
   results.forEach(r=>{
@@ -890,7 +913,7 @@ function finishPrompt(){
     popDelta(r.p.cid, r.ok?('+'+r.delta+(r.bonus?' ⚡':'')):(r.reason==='timeout'?'⏰ −❤':'✘ −❤'), r.ok);
     send(r.p,{t:'result',ok:r.ok,reason:r.reason,delta:r.delta,bonus:r.bonus,lives:r.p.lives,score:r.p.score,alive:r.p.alive});
   });
-  setTimeout(()=>{ if(run===H.runId) cur.resolve(); }, elimNames.length?2100:1500);
+  setTimeout(()=>{ if(run===H.runId) cur.resolve(); }, elimNames.length?2800:1500);
 }
 function shouldEnd(){
   const alive=[...H.players.values()].filter(p=>p.inGame&&p.alive).length;
@@ -909,6 +932,8 @@ function buildScoreboard(){
   updateScoreboard();
 }
 function updateScoreboard(){
+  const ac=$('#aliveCount');
+  if(H.startCount>1){ const n=[...H.players.values()].filter(q=>q.inGame&&q.alive).length; ac.textContent='👥 '+n+' LEFT'; ac.hidden=false; } else ac.hidden=true;
   H.players.forEach(p=>{
     const el=H.cards.get(p.cid); if(!el) return;
     let hs=''; for(let i=0;i<START_LIVES;i++) hs+='<span class="h'+(i<p.lives?'':' lost')+'">♥</span>';
@@ -928,18 +953,25 @@ function endGame(){
   const all=[...H.players.values()].filter(p=>p.inGame);
   const alive=all.filter(p=>p.alive);
   const solo=H.startCount===1;
-  let winners;
+  let winners, tieNote='';
+  const avgMs=p=>p.rtN?p.rtSum/p.rtN:Infinity;
   if(solo) winners=[all[0]];
   else if(alive.length===1) winners=alive;
   else {
     const pool=alive.length?alive:all.filter(p=>p.elimAt===Math.max(...all.map(q=>q.elimAt)));
     const top=Math.max(...pool.map(p=>p.score)); winners=pool.filter(p=>p.score===top);
+    if(winners.length>1){                       // tie on score -> fastest average correct answer wins
+      const best=Math.min(...winners.map(avgMs));
+      const fastest=winners.filter(p=>avgMs(p)===best);
+      tieNote='TIE ON '+top+' POINTS — BROKEN BY FASTEST AVERAGE ANSWER'+(isFinite(best)?' ('+(best/1000).toFixed(2)+'s)':'');
+      winners=fastest;
+    }
   }
   const standings=all.slice().sort((a,b)=>{
     const aw=winners.includes(a), bw=winners.includes(b); if(aw!==bw) return aw?-1:1;
     if(a.alive!==b.alive) return a.alive?-1:1;
     if(!a.alive && a.elimAt!==b.elimAt) return b.elimAt-a.elimAt;
-    return b.score-a.score;
+    return (b.score-a.score) || (avgMs(a)-avgMs(b)) || 0;
   });
   const soloDead = solo && !all[0].alive;
   const title = soloDead ? 'GAME OVER' : (winners.length>1?'IT\'S A TIE!':'WINNER!');
@@ -953,13 +985,14 @@ function endGame(){
   $('#winTitle').textContent=title;
   $('#winName').textContent=winners.map(p=>p.name).join(' & ');
   $('#winName').style.color=winners[0].color;
+  $('#winSub').textContent=tieNote;
   const box=$('#standings'); box.innerHTML='';
   standings.forEach(p=>{
     const r=document.createElement('div'); r.className='row'; r.style.setProperty('--pc',p.color);
     const rk=document.createElement('span'); rk.className='rk'; rk.textContent=winners.includes(p)?'🏆':'#'+p.endInfo.rank;
     const nm=document.createElement('span'); nm.className='nm'; nm.textContent=p.name;
     const sc=document.createElement('span'); sc.className='sc'; sc.textContent=p.score;
-    const st=document.createElement('span'); st.className='st'; st.textContent=p.alive?('❤'.repeat(p.lives)):'OUT';
+    const st=document.createElement('span'); st.className='st'; st.textContent=(p.alive?('❤'.repeat(p.lives)):'OUT')+(p.rtN?' · '+(p.rtSum/p.rtN/1000).toFixed(2)+'s':'');
     r.append(rk,nm,sc,st); box.appendChild(r);
   });
   if(!soloDead){ Sfx.fanfare(); Confetti.start(); } else Sfx.elim();
