@@ -308,7 +308,7 @@ input.field:focus{border-color:var(--cyan)}
     <button class="bigbtn" id="btnTrue" disabled>✔ TRUE</button>
     <button class="bigbtn" id="btnFalse" disabled>✘ FALSE</button>
     <div id="cFlash"><div class="a"></div><div class="b"></div></div>
-    <div id="cOverlay"><h2></h2><p></p></div>
+    <div id="cOverlay"><h2></h2><p></p><button class="btn" id="btnRename" hidden>✎ CHANGE NAME</button></div>
   </div>
 </div>
 
@@ -677,7 +677,15 @@ function onMsg(m){
   if(m.t==='join'){
     const cid=String(m.cid||'').slice(0,40); if(!cid) return;
     let p=H.players.get(cid);
-    if(p){ p.connected=true; clearTimeout(p.dcT); }
+    if(p){
+      p.connected=true; clearTimeout(p.dcT);
+      const nn=cleanName(m.name);
+      if(H.phase==='lobby' && nn && nn!==p.name){
+        let name=nn; const base=nn; let n=2;
+        while([...H.players.values()].some(q=>q!==p&&q.name===name)) name=(base.slice(0,10)+' '+(n++)).slice(0,12);
+        p.name=name;
+      }
+    }
     else {
       if(H.players.size>=MAX_PLAYERS){ H.room.child('down/'+cid).set({seq:1,ev:{t:'rejected',reason:'Room is full (8 players max).'}}).catch(()=>{}); return; }
       let name=cleanName(m.name)||('PLAYER '+(H.players.size+1)); const base=name; let n=2;
@@ -979,7 +987,12 @@ function startController(prefill){
   const bind=(el,v)=>{ el.addEventListener('pointerdown',e=>{ e.preventDefault(); ctrlAnswer(v); }); };
   bind(t,true); bind(f,false);
   document.addEventListener('keydown',e=>{ if(e.target&&e.target.tagName==='INPUT') return; if(e.key==='t'||e.key==='T'||e.key==='ArrowLeft') ctrlAnswer(true); if(e.key==='f'||e.key==='F'||e.key==='ArrowRight') ctrlAnswer(false); });
-  if(prefill && $('#inName').value) ctrlJoin();      // returning player: rejoin straight away
+  $('#btnRename').onclick=()=>{
+    $('#inName').value=C.name; $('#btnJoin').textContent='SAVE NAME'; $('#btnJoin').disabled=false; setStatus('');
+    show($('#cJoin')); show($('#cMain'),false); $('#inName').focus(); $('#inName').select();
+  };
+  // Only auto-rejoin when this same tab was already in this room (page reload); a fresh QR scan shows the name screen.
+  if(prefill && $('#inName').value && sess.get('bf_active')===$('#inCode').value) ctrlJoin();
   else if(prefill) $('#inName').focus();
 }
 function setStatus(t){ $('#cStatus').textContent=t||''; }
@@ -988,6 +1001,11 @@ function ctrlJoin(){
   if(code.length!==4){ setStatus('Enter the 4-letter room code.'); return; }
   if(!name){ setStatus('Pick a name!'); $('#inName').focus(); return; }
   if(!fbDb){ setStatus('Could not load Firebase (internet needed).'); return; }
+  if(C.joined && C.room && code===C.code){          // already in the room: just change the name
+    C.name=name; store.set('bf_name',name);
+    C.room.child('up').push({t:'join',cid:C.cid,name});
+    $('#btnJoin').textContent='JOIN'; show($('#cJoin'),false); show($('#cMain')); renderCtrl(); return;
+  }
   C.code=code; C.name=name; store.set('bf_name',name); setStatus('Connecting…');
   $('#btnJoin').disabled=true;
   ctrlConnect();
@@ -995,7 +1013,7 @@ function ctrlJoin(){
 function ctrlBack(msg){
   C.refs.forEach(r=>{ try{ r.off(); }catch(e){} }); C.refs=[];
   clearTimeout(C.goneT); clearTimeout(C.lockT);
-  C.joined=false; C.hostGone=false; C.connected=true; C.room=null;
+  C.joined=false; C.hostGone=false; C.connected=true; C.room=null; sess.set('bf_active','');
   setStatus(msg||''); $('#btnJoin').disabled=false; show($('#cJoin')); show($('#cMain'),false);
 }
 function markPresence(){
@@ -1011,7 +1029,7 @@ async function ctrlConnect(){
     const game=(await withTimeout(room.child('game').once('value'),12000,'looking up the room')).val();
     if(game!=='brainflip'){ ctrlBack('Room not found — check the code (or ask the host for a fresh QR).'); return; }
     setStatus('Step 3/3: joining…');
-    C.room=room; C.joined=true; C.lastIdx=-1;
+    C.room=room; C.joined=true; C.lastIdx=-1; sess.set('bf_active',C.code);
     markPresence();
     const conRef=fbDb.ref('.info/connected');
     conRef.on('value',s=>{ C.connected=!!s.val(); if(C.connected) markPresence(); renderCtrl(); });
@@ -1105,6 +1123,7 @@ function renderCtrl(){
   }
   if(mode===null) ov.hidden=true;
   else { ov.hidden=false; ov.className=mode; h2.textContent=t1; p.textContent=t2; }
+  $('#btnRename').hidden=!(s.phase==='lobby' && C.connected && !C.hostGone);
 }
 
 /* =====================================================================
