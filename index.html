@@ -120,6 +120,12 @@ input.field:focus{border-color:var(--cyan)}
 #outBanner .ob1{font-family:var(--font);font-size:clamp(1.8rem,5vw,4.4rem);color:#ff6b7d;text-shadow:0 4px 0 #000}
 #outBanner .ob2{font-family:var(--font);font-size:clamp(1.2rem,3vw,2.6rem);color:var(--neon)}
 #winSub{font-size:clamp(1rem,2vw,1.7rem);font-weight:700;opacity:.9;margin:.4rem 0 0;min-height:1.2em}
+#speedTag{font-family:var(--font);font-size:clamp(1rem,2vw,1.8rem);padding:.2em .7em;border-radius:999px;background:#ffffff22;white-space:nowrap}
+#speedTag.pulse{animation:spulse .9s}
+@keyframes spulse{0%{transform:scale(1.6);background:#ff3347;color:#fff}100%{transform:scale(1)}}
+#speedFlash{position:absolute;top:1vh;left:50%;transform:translate(-50%,-20px) scale(.8);opacity:0;pointer-events:none;z-index:7;white-space:nowrap;
+  font-family:var(--font);font-size:clamp(1.6rem,4.4vw,4rem);color:#fff;background:#d6212fee;border:5px solid #ffe14d;border-radius:18px;padding:.2rem 1.6rem;box-shadow:0 0 50px #ff3347aa;transition:.2s cubic-bezier(.2,1.6,.4,1)}
+#speedFlash.show{opacity:1;transform:translate(-50%,0) scale(1)}
 #promptNo{font-family:var(--font);font-size:clamp(1rem,2vw,1.8rem);opacity:.9;min-width:9ch;text-align:right}
 #stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;min-height:0;text-align:center}
 #itemName{font-family:var(--font);font-size:clamp(3rem,min(11vw,19vh),11rem);line-height:.95;text-shadow:0 8px 0 #0007,0 0 40px #fff5;padding:0 2vw;max-width:96vw}
@@ -333,6 +339,7 @@ input.field:focus{border-color:var(--cyan)}
       <div id="rbEmoji">🧠</div>
       <div id="rbText">GET READY</div>
       <div id="rbDots"></div>
+      <div id="speedTag"></div>
       <div id="aliveCount"></div>
       <div id="promptNo"></div>
     </div>
@@ -340,6 +347,7 @@ input.field:focus{border-color:var(--cyan)}
       <div id="itemName">…</div>
       <div id="outBanner"><div class="ob1"></div><div class="ob2"></div></div>
       <div id="saboToast"></div>
+      <div id="speedFlash"></div>
       <div id="reveal"><div id="revAns"></div><div id="revFact"></div></div>
     </div>
     <div id="timerWrap"><div id="timerBar"></div></div>
@@ -395,6 +403,10 @@ input.field:focus{border-color:var(--cyan)}
    CONFIG
    ===================================================================== */
 const TIMER_MS      = 2250;   // exactly 2.25 s per prompt
+const SPEEDUP_EVERY = 3;      // every N prompts the timer gets shorter...
+const SPEEDUP_STEP  = 100;    // ...by this many ms...
+const MIN_TIMER_MS  = 1500;   // ...but never below this
+const promptDur = idx => Math.max(MIN_TIMER_MS, TIMER_MS - SPEEDUP_STEP*Math.floor(idx/SPEEDUP_EVERY));
 const BONUS_MS      = 1000;   // faster than this = +50 bonus
 const TOTAL_PROMPTS = 20;
 const RULE_EVERY    = 5;
@@ -630,7 +642,7 @@ function route(){
    ===================================================================== */
 const H = {
   room:null, uid:'', code:'', players:new Map(), cards:new Map(),
-  phase:'lobby', runId:0, cur:null, rule:null, ruleSeq:[], used:new Set(), startCount:0, started:false, lastIdx:-1
+  phase:'lobby', runId:0, cur:null, rule:null, ruleSeq:[], used:new Set(), startCount:0, started:false, lastIdx:-1, lastDur:0
 };
 
 function startHost(){
@@ -734,7 +746,7 @@ function snapshot(p){
   const o={name:p.name, emoji:p.emoji, color:p.color, phase:H.phase, inGame:p.inGame, alive:p.alive, lives:p.lives, score:p.score,
     streak:p.streak||0, rank:rankOf(p), n:[...H.players.values()].filter(q=>q.inGame).length,
     rule: ruleInfo(H.rule), total:TOTAL_PROMPTS,
-    open: !!(cur && !cur.done && p.inGame && p.alive && !(p.cid in cur.answers)), idx: cur?cur.idx:-1,
+    open: !!(cur && !cur.done && p.inGame && p.alive && !(p.cid in cur.answers)), idx: cur?cur.idx:-1, dur: cur?cur.dur:TIMER_MS,
     flip: flipOn, flipBy: flipOn?p.flipSrc2||'':'',
     end: p.endInfo||null};
   if(H.phase==='playing' && p.inGame && !p.alive){        // eliminated: give the sabotage menu what it needs
@@ -778,7 +790,7 @@ function onMsg(m){
     const p=H.players.get(String(m.cid||'')); const cur=H.cur;
     if(!p||!cur||cur.done||!p.inGame||!p.alive) return;
     const ms=Number(m.ms);
-    if(m.idx!==cur.idx||typeof m.v!=='boolean'||!isFinite(ms)||ms<0||ms>TIMER_MS+80||(p.cid in cur.answers)) return;
+    if(m.idx!==cur.idx||typeof m.v!=='boolean'||!isFinite(ms)||ms<0||ms>cur.dur+80||(p.cid in cur.answers)) return;
     cur.answers[p.cid]={v:m.v, ms};          // ms measured on the phone, from when the prompt reached it
     lockReact(p);
     if(allAnswered(cur)) finishPrompt();
@@ -856,7 +868,7 @@ function renderLobby(){
 }
 function goLobby(){
   H.runId++; clearCur(); H.cur=null; Voice.cancel(); Confetti.stop();
-  H.phase='lobby'; H.rule=null; H.lastIdx=-1;
+  H.phase='lobby'; H.rule=null; H.lastIdx=-1; H.lastDur=0;
   for(const [cid,p] of H.players) if(!p.connected) H.players.delete(cid);
   H.players.forEach(p=>{ p.inGame=true; resetPlayer(p); });
   show($('#sLobby')); show($('#sGame'),false); show($('#sEnd'),false);
@@ -894,7 +906,7 @@ function startGame(){
   for(const [cid,p] of H.players) if(!p.connected) H.players.delete(cid);
   if(!H.players.size) return;
   H.players.forEach(p=>{ p.inGame=true; resetPlayer(p); });
-  H.startCount=H.players.size; H.lastIdx=-1; H.used.clear(); H.ruleSeq=makeRuleSeq(); H.rule=null; H.cur=null;
+  H.startCount=H.players.size; H.lastIdx=-1; H.lastDur=0; H.used.clear(); H.ruleSeq=makeRuleSeq(); H.rule=null; H.cur=null;
   H.phase='playing'; H.runId++;
   show($('#sLobby'),false); show($('#sGame')); show($('#sEnd'),false);
   $('#rbEmoji').textContent='🧠'; $('#rbText').textContent='GET READY'; $('#promptNo').textContent='';
@@ -953,11 +965,20 @@ function pickItem(rule){
 function runPrompt(idx){
   return new Promise(resolve=>{
     const rule=H.rule, item=pickItem(rule);
-    const cur=H.cur={idx,item,answer:rule.test(item),start:0,answers:{},done:false,timers:[],raf:0,resolve};
+    const cur=H.cur={idx,item,answer:rule.test(item),dur:promptDur(idx),start:0,answers:{},done:false,timers:[],raf:0,resolve};
     // sabotage: flips queued by eliminated players land on this prompt only
     H.lastIdx=idx;
     H.players.forEach(q=>{ q.flipNow=q.flipNext; q.flipSrc2=q.flipNow?q.flipSrc:''; q.flipNext=false; q.flipSrc=''; });
     updateScoreboard();
+    // speed-up: show the current time limit, and shout when it shrinks
+    const prevDur=H.lastDur; H.lastDur=cur.dur;
+    const tag=$('#speedTag'); tag.textContent='⏱ '+(cur.dur/1000).toFixed(2)+'s';
+    if(prevDur && cur.dur<prevDur){
+      tag.classList.remove('pulse'); void tag.offsetWidth; tag.classList.add('pulse');
+      const sf=$('#speedFlash'); sf.textContent='⚡ FASTER!  '+(cur.dur/1000).toFixed(2)+' SECONDS';
+      sf.classList.add('show'); setTimeout(()=>sf.classList.remove('show'),1400);
+      Sfx.tone(450,.28,'square',.12,0,1600);
+    }
     // UI
     const nm=$('#itemName'); nm.textContent=item.name.toUpperCase();
     nm.classList.remove('pop'); void nm.offsetWidth; nm.classList.add('pop');
@@ -974,15 +995,15 @@ function runPrompt(idx){
     // timer bar
     const step=()=>{
       if(cur.done) return;
-      const f=Math.max(0,1-(performance.now()-cur.start)/TIMER_MS);
+      const f=Math.max(0,1-(performance.now()-cur.start)/cur.dur);
       bar.style.transform='scaleX('+f+')'; bar.style.background='hsl('+Math.round(120*f)+',95%,55%)';
       $('#timerWrap').classList.toggle('urgent', f<.35);
       cur.raf=requestAnimationFrame(step);
     };
     cur.raf=requestAnimationFrame(step);
     // ticks
-    [0,450,900,1350,1800,2000,2150].forEach(t=>cur.timers.push(setTimeout(()=>{ if(!cur.done) Sfx.tick(t>=1800); },t)));
-    cur.timers.push(setTimeout(finishPrompt, TIMER_MS+GRACE_MS));
+    [0,.2,.4,.6,.8,.89,.96].forEach(fr=>cur.timers.push(setTimeout(()=>{ if(!cur.done) Sfx.tick(fr>=.8); },Math.round(fr*cur.dur))));
+    cur.timers.push(setTimeout(finishPrompt, cur.dur+GRACE_MS));
   });
 }
 function finishPrompt(){
@@ -1296,7 +1317,7 @@ function applyHostMsg(m, skipEv){
         cm.classList.add('wobble'); if(navigator.vibrate) navigator.vibrate([60,40,60,40,60]);
         const fb=$('#cFlipBanner'); fb.textContent='🔀 FLIPPED BY '+(st.flipBy||'A GHOST 👻'); fb.className=''; void fb.offsetWidth; fb.className='show';
       }
-      clearTimeout(C.lockT); C.lockT=setTimeout(()=>{ if(C.s.open){ C.s.open=false; renderCtrl(); } }, TIMER_MS);
+      clearTimeout(C.lockT); C.lockT=setTimeout(()=>{ if(C.s.open){ C.s.open=false; renderCtrl(); } }, st.dur||TIMER_MS);
     }
   }
   if(ev && !skipEv){
