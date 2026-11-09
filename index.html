@@ -2,24 +2,23 @@
 <!--
 =====================================================================
   BRAIN FLIP — couch party game (1 TV host + many phone controllers)
-  Single file. No backend. PeerJS (WebRTC) + QRCode.js + Web Speech + Web Audio.
+  Single file. Rooms run on Firebase Realtime Database (same setup as the Hand Cricket game)
+  + QRCode.js + Web Speech + Web Audio.
 
   HOW TO LAUNCH
   -------------
-  1) Put this file somewhere phones can load it over http(s):
-       • Quick LAN test:   python3 -m http.server 8000      (in this folder)
-                           then open  http://<your-computer-LAN-IP>:8000/brainflip.html
-       • Or drag the file onto Netlify Drop / GitHub Pages / any static host.
-     (Opening it straight from disk works for the HOST, but phones can't
-      reach a file:// address — see the "page address" box in the lobby.)
-
-  2) HOST MODE (TV / laptop):   open the page and click "HOST ON THIS SCREEN"
-                                (or open  brainflip.html?host  directly).
-  3) CONTROLLER MODE (phones):  scan the QR code on the TV — it opens
-                                brainflip.html?room=ABCD  — or open the page,
-                                click "JOIN AS PLAYER" and type the 4-letter code.
-  4) Host presses START (Enter / Space). Phones need internet access to reach
-     the free PeerJS signalling server; same Wi-Fi gives the best latency.
+  1) Host this file at any web address phones can open (the same place you host
+     your other game: GitHub Pages, Firebase Hosting, Netlify, ...). Name it index.html
+     or anything you like. Opening it from disk works for the TV, but phones can't
+     reach file:// — paste your public address into the lobby's "page address" box.
+  2) HOST MODE (TV / laptop):   open the page, click "HOST ON THIS SCREEN"
+                                (or open  <your address>?host).  It creates a room,
+                                shows a 4-letter code and a QR code.
+  3) CONTROLLER MODE (phones):  scan the QR — it opens  <your address>#ABCD  — or open
+                                the page, click "JOIN AS PLAYER", type the code.
+  4) Host presses START (Enter / Space).
+  Firebase: needs Anonymous sign-in enabled (already true for your cricket project)
+  and database rules that allow signed-in users to read/write  rooms/BF*.
 
   Host keys: Enter/Space = start / play again · Q = quit to lobby
              M = mute sound · V = mute voice · F = fullscreen
@@ -180,7 +179,7 @@ input.field:focus{border-color:var(--cyan)}
 #ctrl{position:fixed;inset:0;z-index:1;display:flex;flex-direction:column;height:100dvh;user-select:none;-webkit-user-select:none;touch-action:manipulation}
 #cJoin{margin:auto;width:min(92vw,420px);text-align:center;display:flex;flex-direction:column;gap:1rem;padding:1rem}
 #cJoin .logo{font-size:clamp(2.6rem,16vw,5rem);margin:0}
-#cStatus{min-height:1.5em;color:#ffd0d0;font-weight:700}
+#cStatus{min-height:1.5em;color:#ffd0d0;font-weight:700;word-break:break-word;font-size:.95rem}
 #cMain{flex:1;display:flex;flex-direction:column;min-height:0;background:linear-gradient(#0b0b24,color-mix(in srgb,var(--rc,#4f46e5) 35%,#0b0b24))}
 .cbar{display:flex;justify-content:space-between;align-items:center;padding:calc(env(safe-area-inset-top) + 8px) 14px 6px;font-family:var(--font);font-size:1.1rem;gap:.6rem}
 #cName{max-width:36vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -226,8 +225,8 @@ input.field:focus{border-color:var(--cyan)}
     <summary>HOW TO LAUNCH</summary>
     <p><b>Host mode (TV / laptop):</b> open this page and press <i>Host on this screen</i> (or load <code>?host</code>). A QR code and 4-letter room code appear.</p>
     <p><b>Controller mode (phones):</b> scan the TV's QR code (opens <code>?room=ABCD</code>) or press <i>Join as player</i> and type the code. You get two giant buttons: <span class="tag t">TRUE</span> and <span class="tag f">FALSE</span>.</p>
-    <p><b>Serving the file:</b> phones must be able to open this page over http(s). Easiest: run <code>python3 -m http.server 8000</code> in this folder and open <code>http://YOUR-LAN-IP:8000/brainflip.html</code> on the TV, or upload the file to any static host (Netlify Drop, GitHub Pages…). Everyone needs internet for the free PeerJS signalling server; the game then runs peer-to-peer.</p>
-    <p><b>Rules:</b> 3 lives each. Every 5 prompts the rule flips (Does it fly? / Does it swim? / Has wheels?). Answer TRUE or FALSE about the word on the TV before the 2¼-second bar runs out. Correct = +100 (+50 if under 1 s). Wrong or too slow = lose a heart. Last one standing wins — or highest score after 20 prompts.</p>
+    <p><b>Rooms &amp; QR:</b> the TV creates an online room (Firebase) and shows a QR code that opens this page with the room code in the address, e.g. <code>…/index.html#ABCD</code>. Phones just scan it — no install, no same-Wi-Fi requirement. The page itself must be hosted at a normal web address (like your other game).
+    </p><p><b>Rules:</b> 3 lives each. Every 5 prompts the rule flips (Does it fly? / Does it swim? / Has wheels?). Answer TRUE or FALSE about the word on the TV before the 2¼-second bar runs out. Correct = +100 (+50 if under 1 s). Wrong or too slow = lose a heart. Last one standing wins — or highest score after 20 prompts.</p>
   </details>
 </div>
 
@@ -313,7 +312,9 @@ input.field:focus{border-color:var(--cyan)}
   </div>
 </div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
 (() => {
@@ -331,6 +332,31 @@ const MAX_PLAYERS   = 8;
 const ID_PREFIX     = 'brainflip-';
 const COLORS = ['#ff4d6d','#27e8ff','#ffe14d','#7CFF6B','#c77dff','#ff9f1c','#4dffd2','#ff8fd8'];
 const ABORT = Symbol('abort');
+const GRACE_MS = 400;               // extra wait for in-flight phone answers (phones time themselves to 2.25 s)
+const ROOM_ROOT = 'rooms/BF';       // rooms/BFABCD  (BF prefix keeps it apart from the cricket game's rooms)
+
+/* ---- Firebase (same project as the Hand Cricket game) ---- */
+const firebaseConfig={
+  apiKey:'AIzaSyDF37f4bW_pG-vM0YuVS4xegVb6IrVW6ho',
+  authDomain:'hand-cricket-8d572.firebaseapp.com',
+  projectId:'hand-cricket-8d572',
+  storageBucket:'hand-cricket-8d572.firebasestorage.app',
+  messagingSenderId:'1019109005590',
+  appId:'1:1019109005590:web:0e855323ad9cca582d1837',
+  databaseURL:'https://hand-cricket-8d572-default-rtdb.europe-west1.firebasedatabase.app'
+};
+let fbAuth=null, fbDb=null, authPromise=null;
+try{ if(typeof firebase!=='undefined'){ firebase.initializeApp(firebaseConfig); fbAuth=firebase.auth(); fbDb=firebase.database(); } }catch(e){ console.error(e); }
+function withTimeout(promise, ms, label){
+  let t; const to=new Promise((_,rej)=>{ t=setTimeout(()=>rej(Object.assign(new Error('Timed out while '+label+' ('+(ms/1000)+'s)'),{code:'timeout'})),ms); });
+  return Promise.race([promise,to]).finally(()=>clearTimeout(t));
+}
+function errText(e){ return ((e&&e.code)?'['+e.code+'] ':'')+((e&&e.message)||'unknown error'); }
+function ensureAuth(){
+  if(fbAuth.currentUser) return Promise.resolve(fbAuth.currentUser);
+  if(!authPromise) authPromise=fbAuth.signInAnonymously().then(r=>r.user).catch(e=>{ authPromise=null; throw e; });
+  return authPromise;
+}
 
 const RULES = [
   {id:'fly',    key:'flies',  q:'DOES IT FLY?',   say:'Does it fly?',   emoji:'🦅', c1:'#a855f7', c2:'#4f46e5'},
@@ -524,7 +550,8 @@ const Confetti = {
    ===================================================================== */
 const params = new URLSearchParams(location.search);
 function route(){
-  if(params.has('room')) startController(params.get('room'));
+  const hashCode=(location.hash||'').slice(1).toUpperCase();
+  if(params.has('room')||/^[A-Z]{4}$/.test(hashCode)) startController(params.get('room')||hashCode);
   else if(params.has('host')) startHost();
   else {
     show($('#landing'));
@@ -537,7 +564,7 @@ function route(){
    HOST
    ===================================================================== */
 const H = {
-  peer:null, code:'', players:new Map(), cards:new Map(),
+  room:null, uid:'', code:'', players:new Map(), cards:new Map(),
   phase:'lobby', runId:0, cur:null, rule:null, ruleSeq:[], used:new Set(), startCount:0, started:false
 };
 
@@ -545,25 +572,42 @@ function startHost(){
   H.started = true;
   show($('#host')); Confetti.init(); keepAwake();
   bindHostUI();
-  if(typeof Peer==='undefined'){ $('#netBadge').textContent='● PEERJS BLOCKED'; $('#roomCode').textContent='ERR'; $('#joinUrl').textContent='Could not load PeerJS from the CDN — check internet access.'; return; }
-  initPeer();
+  if(!fbDb){ $('#netBadge').textContent='● FIREBASE BLOCKED'; $('#roomCode').textContent='ERR'; $('#joinUrl').textContent='Could not load Firebase — check internet access.'; return; }
+  openRoom();
   renderLobby();
 }
 
-function initPeer(){
-  if(H.peer){ try{H.peer.destroy()}catch(e){} }
-  H.code = genCode();
-  $('#roomCode').textContent = H.code;
-  const peer = new Peer(ID_PREFIX+H.code, {debug:1});
-  H.peer = peer;
-  peer.on('open', ()=>{ $('#netBadge').textContent='● ONLINE'; $('#netBadge').style.color='#6bff9a'; renderQR(); });
-  peer.on('connection', onConn);
-  peer.on('disconnected', ()=>{ $('#netBadge').textContent='● RECONNECTING…'; $('#netBadge').style.color='#ffb020'; try{ peer.reconnect(); }catch(e){} });
-  peer.on('error', err=>{
-    if(err.type==='unavailable-id'){ initPeer(); return; }
-    $('#netBadge').textContent='● '+(err.type||'ERROR').toUpperCase();
-    $('#netBadge').style.color='#ff6b7d';
-  });
+async function openRoom(){
+  const badge=$('#netBadge'); badge.textContent='● CREATING ROOM…'; badge.style.color='#ffb020';
+  try{
+    const user=await withTimeout(ensureAuth(),12000,'signing in to Firebase'); H.uid=user.uid;
+    for(let a=0;a<10;a++){
+      const code=genCode(), room=fbDb.ref(ROOM_ROOT+code);
+      const claim=await withTimeout(room.transaction(cur=>cur===null?{game:'brainflip',hostId:user.uid,createdAt:firebase.database.ServerValue.TIMESTAMP}:undefined),12000,'reserving a room');
+      if(!claim.committed) continue;
+      H.code=code; H.room=room; room.onDisconnect().remove();
+      room.child('up').on('child_added', s=>{ const m=s.val(); s.ref.remove().catch(()=>{}); onMsg(m); });
+      room.child('presence').on('value', s=>onPresence(s.val()||{}));
+      $('#roomCode').textContent=code; renderQR();
+      let wasOn=false;
+      fbDb.ref('.info/connected').on('value', s=>{
+        const on=!!s.val();
+        badge.textContent=on?'● ONLINE':'● RECONNECTING…'; badge.style.color=on?'#6bff9a':'#ffb020';
+        if(on&&wasOn){ // server may have dropped the room while we were offline: restore it
+          room.update({game:'brainflip',hostId:H.uid,createdAt:firebase.database.ServerValue.TIMESTAMP})
+            .then(()=>{ room.onDisconnect().remove(); pushAll(); }).catch(()=>{});
+        }
+        if(on) wasOn=true;
+      });
+      return;
+    }
+    throw new Error('Could not reserve a room code. Reload and try again.');
+  }catch(e){
+    badge.textContent='● ROOM ERROR'; badge.style.color='#ff6b7d';
+    $('#roomCode').textContent='ERR';
+    console.error('room failed',e);
+    $('#joinUrl').textContent='Could not create the room → '+errText(e);
+  }
 }
 
 function baseUrl(){
@@ -571,7 +615,7 @@ function baseUrl(){
   if(!b && location.protocol!=='file:' && !/^(localhost|127\.|\[::1\])/.test(location.hostname)) b = location.origin+location.pathname;
   return b.split('#')[0].split('?')[0];
 }
-function joinUrl(){ const b=baseUrl(); return b ? b+'?room='+H.code : ''; }
+function joinUrl(){ const b=baseUrl(); return b && H.code ? b+'#'+H.code : ''; }
 function renderQR(){
   const box=$('#qr'); box.innerHTML='';
   const url=joinUrl();
@@ -608,58 +652,65 @@ function toggleSfx(){ Sfx.muted=!Sfx.muted; $('#btnSfx').classList.toggle('off',
 function toggleVoice(){ Voice.muted=!Voice.muted; $('#btnVoice').classList.toggle('off',Voice.muted); if(Voice.muted) Voice.cancel(); }
 function toggleFs(){ try{ if(document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }catch(e){} }
 
-/* ---- networking ---- */
-function send(p,msg){ try{ if(p.conn && p.conn.open) p.conn.send(msg); }catch(e){} }
+/* ---- networking (Firebase RTDB) ----
+   rooms/BFxxxx/up            phones -> host   (push list: join / answer), host deletes each after reading
+   rooms/BFxxxx/down/<uid>    host  -> phone   {seq, ev, st}  ev = one-off event, st = full state snapshot
+   rooms/BFxxxx/presence/<uid> true while a phone is connected                                         */
+function send(p,ev){
+  if(!H.room) return;
+  p.seq=(p.seq||0)+1;
+  H.room.child('down/'+p.cid).set({seq:p.seq, ev:ev||null, st:snapshot(p)}).catch(()=>{});
+}
 function broadcast(msg, filter){ H.players.forEach(p=>{ if(!filter||filter(p)) send(p,msg); }); }
 function ruleInfo(r){ return r?{id:r.id,q:r.q,emoji:r.emoji,c1:r.c1,c2:r.c2}:null; }
 function snapshot(p){
   const cur=H.cur;
-  return {t:'state', name:p.name, color:p.color, phase:H.phase, inGame:p.inGame, alive:p.alive, lives:p.lives, score:p.score,
+  return {name:p.name, color:p.color, phase:H.phase, inGame:p.inGame, alive:p.alive, lives:p.lives, score:p.score,
     rule: ruleInfo(H.rule), total:TOTAL_PROMPTS,
     open: !!(cur && !cur.done && p.inGame && p.alive && !(p.cid in cur.answers)), idx: cur?cur.idx:-1,
     end: p.endInfo||null};
 }
-function pushAll(){ H.players.forEach(p=>send(p,snapshot(p))); }
+function pushAll(){ H.players.forEach(p=>send(p,null)); }
 
-function onConn(conn){
-  conn.on('data', m=>onMsg(conn,m));
-  conn.on('close', ()=>onClose(conn));
-  conn.on('error', ()=>onClose(conn));
-}
-function onMsg(conn,m){
+function onMsg(m){
   if(!m||typeof m!=='object') return;
   if(m.t==='join'){
-    const cid=String(m.cid||'').slice(0,24); if(!cid) return;
+    const cid=String(m.cid||'').slice(0,40); if(!cid) return;
     let p=H.players.get(cid);
-    if(p){
-      if(p.conn && p.conn!==conn){ try{p.conn.close()}catch(e){} }
-      p.conn=conn; p.connected=true;
-    } else {
-      if(H.players.size>=MAX_PLAYERS){ try{ conn.send({t:'rejected',reason:'Room is full (8 players max).'}); }catch(e){} return; }
+    if(p){ p.connected=true; clearTimeout(p.dcT); }
+    else {
+      if(H.players.size>=MAX_PLAYERS){ H.room.child('down/'+cid).set({seq:1,ev:{t:'rejected',reason:'Room is full (8 players max).'}}).catch(()=>{}); return; }
       let name=cleanName(m.name)||('PLAYER '+(H.players.size+1)); const base=name; let n=2;
       while([...H.players.values()].some(q=>q.name===name)) name=(base.slice(0,10)+' '+(n++)).slice(0,12);
       const used=new Set([...H.players.values()].map(q=>q.color));
-      p={cid,name,color:COLORS.find(c=>!used.has(c))||pick(COLORS),conn,connected:true,
+      p={cid,name,color:COLORS.find(c=>!used.has(c))||pick(COLORS),connected:true,seq:0,
          inGame:H.phase==='lobby',alive:true,lives:START_LIVES,score:0,elimAt:-1,endInfo:null};
       H.players.set(cid,p);
       Sfx.join();
     }
-    send(p,snapshot(p));
-    renderLobby(); if(H.phase==='playing') { buildScoreboard(); }
+    send(p,null);
+    renderLobby(); if(H.phase==='playing') buildScoreboard();
   }
   else if(m.t==='answer'){
-    const p=[...H.players.values()].find(q=>q.conn===conn); const cur=H.cur;
+    const p=H.players.get(String(m.cid||'')); const cur=H.cur;
     if(!p||!cur||cur.done||!p.inGame||!p.alive) return;
-    if(m.idx!==cur.idx||typeof m.v!=='boolean'||(p.cid in cur.answers)) return;
-    cur.answers[p.cid]={v:m.v, ms:performance.now()-cur.start};
+    const ms=Number(m.ms);
+    if(m.idx!==cur.idx||typeof m.v!=='boolean'||!isFinite(ms)||ms<0||ms>TIMER_MS+80||(p.cid in cur.answers)) return;
+    cur.answers[p.cid]={v:m.v, ms};          // ms measured on the phone, from when the prompt reached it
     if(allAnswered(cur)) finishPrompt();
   }
 }
-function onClose(conn){
-  const p=[...H.players.values()].find(q=>q.conn===conn); if(!p) return;
-  p.connected=false;
-  if(H.phase==='lobby'){ H.players.delete(p.cid); renderLobby(); }
-  else { updateScoreboard(); if(H.cur&&!H.cur.done&&allAnswered(H.cur)) finishPrompt(); }
+function onPresence(map){
+  H.players.forEach(p=>{
+    if(map[p.cid]){ p.connected=true; clearTimeout(p.dcT); p.dcT=0; }
+    else if(p.connected){
+      p.connected=false;
+      if(H.phase==='lobby'){
+        p.dcT=setTimeout(()=>{ if(!p.connected&&H.phase==='lobby'){ H.players.delete(p.cid); renderLobby(); } },5000);
+      } else { updateScoreboard(); if(H.cur&&!H.cur.done&&allAnswered(H.cur)) finishPrompt(); }
+    }
+  });
+  if(H.phase==='lobby') renderLobby(); else updateScoreboard();
 }
 function allAnswered(cur){
   const need=[...H.players.values()].filter(p=>p.inGame&&p.alive&&p.connected);
@@ -792,7 +843,7 @@ function runPrompt(idx){
     cur.raf=requestAnimationFrame(step);
     // ticks
     [0,450,900,1350,1800,2000,2150].forEach(t=>cur.timers.push(setTimeout(()=>{ if(!cur.done) Sfx.tick(t>=1800); },t)));
-    cur.timers.push(setTimeout(finishPrompt, TIMER_MS));
+    cur.timers.push(setTimeout(finishPrompt, TIMER_MS+GRACE_MS));
   });
 }
 function finishPrompt(){
@@ -912,15 +963,14 @@ function endGame(){
    CONTROLLER (phone)
    ===================================================================== */
 const C = {
-  code:'', name:'', cid:'', peer:null, conn:null, connected:false, joined:false, retry:0, wantLeave:false,
-  s:{name:'',color:'#fff',phase:'lobby',inGame:true,alive:true,lives:START_LIVES,score:0,rule:null,open:false,idx:-1,end:null},
-  flashT:0
+  code:'', name:'', cid:'', room:null, connected:true, joined:false, hostGone:false, goneT:0,
+  lastIdx:-1, promptAt:0, lockT:0, flashT:0, refs:[],
+  s:{name:'',color:'#fff',phase:'lobby',inGame:true,alive:true,lives:START_LIVES,score:0,rule:null,open:false,idx:-1,end:null}
 };
 function startController(prefill){
   show($('#ctrl'));
   keepAwake();
-  C.cid = sess.get('bf_cid') || genCid(); sess.set('bf_cid',C.cid);
-  $('#inCode').value = (prefill||'').toUpperCase().slice(0,4);
+  $('#inCode').value = (prefill||'').toUpperCase().replace(/[^A-Z]/g,'').slice(0,4);
   $('#inName').value = store.get('bf_name')||'';
   $('#btnJoin').onclick = ctrlJoin;
   $('#inName').addEventListener('keydown',e=>{ if(e.key==='Enter') ctrlJoin(); });
@@ -928,8 +978,8 @@ function startController(prefill){
   const t=$('#btnTrue'), f=$('#btnFalse');
   const bind=(el,v)=>{ el.addEventListener('pointerdown',e=>{ e.preventDefault(); ctrlAnswer(v); }); };
   bind(t,true); bind(f,false);
-  document.addEventListener('keydown',e=>{ if(e.key==='t'||e.key==='T'||e.key==='ArrowLeft') ctrlAnswer(true); if(e.key==='f'||e.key==='F'||e.key==='ArrowRight') ctrlAnswer(false); });
-  if(prefill && $('#inName').value) { /* returning player: auto-join */ ctrlJoin(); }
+  document.addEventListener('keydown',e=>{ if(e.target&&e.target.tagName==='INPUT') return; if(e.key==='t'||e.key==='T'||e.key==='ArrowLeft') ctrlAnswer(true); if(e.key==='f'||e.key==='F'||e.key==='ArrowRight') ctrlAnswer(false); });
+  if(prefill && $('#inName').value) ctrlJoin();      // returning player: rejoin straight away
   else if(prefill) $('#inName').focus();
 }
 function setStatus(t){ $('#cStatus').textContent=t||''; }
@@ -937,67 +987,92 @@ function ctrlJoin(){
   const code=$('#inCode').value.trim().toUpperCase(), name=cleanName($('#inName').value);
   if(code.length!==4){ setStatus('Enter the 4-letter room code.'); return; }
   if(!name){ setStatus('Pick a name!'); $('#inName').focus(); return; }
-  if(typeof Peer==='undefined'){ setStatus('Could not load PeerJS (internet needed).'); return; }
+  if(!fbDb){ setStatus('Could not load Firebase (internet needed).'); return; }
   C.code=code; C.name=name; store.set('bf_name',name); setStatus('Connecting…');
-  $('#btnJoin').disabled=true; C.retry=0; C.wantLeave=false;
+  $('#btnJoin').disabled=true;
   ctrlConnect();
 }
-function ctrlConnect(){
-  if(C.peer){ try{C.peer.destroy()}catch(e){} }
-  const peer=C.peer=new Peer({debug:1});
-  let opened=false;
-  const fail=(msg,hard)=>{
-    if(C.peer!==peer) return;
-    if(C.joined && !hard){ C.connected=false; renderCtrl(); setTimeout(()=>{ if(C.peer===peer) ctrlConnect(); }, 1800); return; }
-    setStatus(msg); $('#btnJoin').disabled=false; show($('#cJoin')); show($('#cMain'),false); C.joined=false;
-  };
-  peer.on('error',err=>{
-    if(err.type==='peer-unavailable') fail(C.joined?'Waiting for host…':'Room not found — check the code.', !C.joined);
-    else fail('Connection problem ('+err.type+').', false);
-  });
-  peer.on('open',()=>{
-    const conn=C.conn=peer.connect(ID_PREFIX+C.code,{reliable:true,serialization:'json'});
-    conn.on('open',()=>{
-      opened=true; C.connected=true; C.joined=true;
-      conn.send({t:'join',cid:C.cid,name:C.name});
-      show($('#cJoin'),false); show($('#cMain')); renderCtrl();
-    });
-    conn.on('data',onHostMsg);
-    conn.on('close',()=>fail('Disconnected.',false));
-    conn.on('error',()=>fail('Connection error.',false));
-    setTimeout(()=>{ if(!opened && C.peer===peer) fail('Could not reach the host.',!C.joined); },9000);
-  });
+function ctrlBack(msg){
+  C.refs.forEach(r=>{ try{ r.off(); }catch(e){} }); C.refs=[];
+  clearTimeout(C.goneT); clearTimeout(C.lockT);
+  C.joined=false; C.hostGone=false; C.connected=true; C.room=null;
+  setStatus(msg||''); $('#btnJoin').disabled=false; show($('#cJoin')); show($('#cMain'),false);
 }
-function onHostMsg(m){
-  if(!m||typeof m!=='object') return;
-  const s=C.s;
-  switch(m.t){
-    case 'state': Object.assign(s,m); if(m.rule) applyRuleColor(m.rule); break;
-    case 'rejected': C.joined=false; try{C.peer.destroy()}catch(e){} setStatus(m.reason||'Rejected.'); $('#btnJoin').disabled=false; show($('#cJoin')); show($('#cMain'),false); return;
-    case 'rule':
-      s.rule=m.rule; s.open=false; applyRuleColor(m.rule);
-      ctrlFlash('rule','⚠ NEW RULE', m.rule.emoji+' '+m.rule.q, 2800, m.rule);
+function markPresence(){
+  if(!C.room) return;
+  const r=C.room.child('presence/'+C.cid); r.set(true); r.onDisconnect().remove();
+}
+async function ctrlConnect(){
+  try{
+    setStatus('Step 1/3: signing in…');
+    const user=await withTimeout(ensureAuth(),12000,'signing in to Firebase'); C.cid=user.uid;
+    const room=fbDb.ref(ROOM_ROOT+C.code);
+    setStatus('Step 2/3: finding room '+C.code+'…');
+    const game=(await withTimeout(room.child('game').once('value'),12000,'looking up the room')).val();
+    if(game!=='brainflip'){ ctrlBack('Room not found — check the code (or ask the host for a fresh QR).'); return; }
+    setStatus('Step 3/3: joining…');
+    C.room=room; C.joined=true; C.lastIdx=-1;
+    markPresence();
+    const conRef=fbDb.ref('.info/connected');
+    conRef.on('value',s=>{ C.connected=!!s.val(); if(C.connected) markPresence(); renderCtrl(); });
+    const downRef=room.child('down/'+C.cid);
+    let first=true, lastSeq=0, had=false;
+    downRef.on('value',s=>{
+      const m=s.val();
+      if(!m){
+        if(had && !C.hostGone){
+          C.hostGone=true; renderCtrl();
+          C.goneT=setTimeout(()=>{ if(C.hostGone) ctrlBack('The host closed the room.'); },45000);
+        }
+        return;
+      }
+      if(C.hostGone){ C.hostGone=false; clearTimeout(C.goneT); markPresence(); }
+      had=true;
+      if(!first && m.seq<=lastSeq) return;
+      lastSeq=m.seq; applyHostMsg(m, first); first=false;
+    });
+    C.refs=[conRef,downRef];
+    room.child('up').push({t:'join',cid:C.cid,name:C.name});
+    show($('#cJoin'),false); show($('#cMain')); renderCtrl();
+    setTimeout(()=>{ if(C.joined && !had && !C.hostGone) setStatus(''); },100);
+  }catch(e){
+    console.error('join failed',e);
+    ctrlBack('Could not join → '+errText(e));
+  }
+}
+function applyHostMsg(m, skipEv){
+  const s=C.s, st=m.st, ev=m.ev;
+  if(ev&&ev.t==='rejected'){ ctrlBack(ev.reason||'Rejected.'); return; }
+  if(st){
+    const newPrompt = !!st.open && st.idx!==C.lastIdx;
+    Object.assign(s,st); s.rule=st.rule||null; s.end=st.end||null;
+    if(!st.open) C.lastIdx=-1;
+    if(st.rule) applyRuleColor(st.rule);
+    if(newPrompt){
+      C.lastIdx=st.idx; C.promptAt=performance.now(); resetChosen(); hideFlash();
+      clearTimeout(C.lockT); C.lockT=setTimeout(()=>{ if(C.s.open){ C.s.open=false; renderCtrl(); } }, TIMER_MS);
+    }
+  }
+  if(ev && !skipEv){
+    if(ev.t==='rule'){
+      ctrlFlash('rule','⚠ NEW RULE', (s.rule?s.rule.emoji+' '+s.rule.q:''), 2800);
       if(navigator.vibrate) navigator.vibrate([120,60,120,60,220]);
-      break;
-    case 'prompt':
-      s.rule=m.rule; applyRuleColor(m.rule); s.open=true; s.idx=m.idx; hideFlash();
-      resetChosen(); break;
-    case 'result':
-      s.open=false; s.lives=m.lives; s.score=m.score; s.alive=m.alive;
-      if(m.ok){ ctrlFlash('ok','✔ +'+m.delta, m.bonus?'⚡ FAST BONUS!':'CORRECT', 1100); if(navigator.vibrate) navigator.vibrate(40); }
-      else { ctrlFlash('no',m.reason==='timeout'?'⏰ TOO SLOW':'✘ WRONG','−1 ♥', 1100); if(navigator.vibrate) navigator.vibrate([200,60,200]); }
-      break;
+    } else if(ev.t==='result'){
+      if(ev.ok){ ctrlFlash('ok','✔ +'+ev.delta, ev.bonus?'⚡ FAST BONUS!':'CORRECT', 1100); if(navigator.vibrate) navigator.vibrate(40); }
+      else { ctrlFlash('no',ev.reason==='timeout'?'⏰ TOO SLOW':'✘ WRONG','−1 ♥', 1100); if(navigator.vibrate) navigator.vibrate([200,60,200]); }
+    }
   }
   renderCtrl();
 }
-function applyRuleColor(r){ if(r) document.documentElement.style.setProperty('--rc', r.c1); if(r){ document.documentElement.style.setProperty('--c1',r.c1); document.documentElement.style.setProperty('--c2',r.c2);} }
+function applyRuleColor(r){ if(r){ const d=document.documentElement.style; d.setProperty('--rc', r.c1); d.setProperty('--c1',r.c1); d.setProperty('--c2',r.c2); } }
 function resetChosen(){ $('#btnTrue').classList.remove('chosen'); $('#btnFalse').classList.remove('chosen'); }
 function ctrlAnswer(v){
   const s=C.s;
-  if(!s.open || !C.connected || s.phase!=='playing') return;
+  if(!s.open || !C.connected || !C.room || s.phase!=='playing') return;
+  const ms=Math.round(performance.now()-C.promptAt);
   s.open=false;
   $('#btnTrue').classList.toggle('chosen',v===true); $('#btnFalse').classList.toggle('chosen',v===false);
-  try{ C.conn.send({t:'answer',v,idx:s.idx}); }catch(e){}
+  C.room.child('up').push({t:'answer',cid:C.cid,v,idx:s.idx,ms}).catch(()=>{});
   if(navigator.vibrate) navigator.vibrate(25);
   renderCtrl();
 }
@@ -1014,13 +1089,12 @@ function renderCtrl(){
   let h=''; for(let i=0;i<START_LIVES;i++) h+= i<s.lives?'♥':'<span style="opacity:.25">♥</span>';
   $('#cHearts').innerHTML=h; $('#cScore').textContent=s.score;
   $('#cRule').textContent = (s.phase==='playing'&&s.rule) ? (s.rule.emoji+' '+s.rule.q) : ' ';
-  const can = s.open && C.connected;
+  const can = s.open && C.connected && !C.hostGone;
   $('#btnTrue').disabled=!can; $('#btnFalse').disabled=!can;
   if(can) resetChosen();
-  // overlay
   const ov=$('#cOverlay'), h2=ov.querySelector('h2'), p=ov.querySelector('p');
   let mode=null,t1='',t2='';
-  if(!C.connected){ mode=''; t1='RECONNECTING…'; t2='Hang tight — keep this page open.'; }
+  if(!C.connected||C.hostGone){ mode=''; t1=C.hostGone?'WAITING FOR HOST…':'RECONNECTING…'; t2='Hang tight — keep this page open.'; }
   else if(s.phase==='lobby'){ mode=''; t1='YOU\'RE IN!'; t2='Eyes on the TV. Waiting for the host to start.'; }
   else if(s.phase==='playing' && !s.inGame){ mode=''; t1='GAME IN PROGRESS'; t2='You\'ll be dealt in next round.'; }
   else if(s.phase==='playing' && !s.alive){ mode='elim'; t1='ELIMINATED'; t2='Final score: '+s.score+' — cheer on the others!'; }
